@@ -10,7 +10,7 @@ SCOPES = [
     'https://www.googleapis.com/auth/fitness.activity.read',
     'https://www.googleapis.com/auth/fitness.sleep.read'
 ]
-PB_TOKEN = 'YOUR_PUSHBULLET_ACCESS_TOKEN'
+PB_TOKEN = 'o.txyD655ztabTCzPEfQpKJAKMQta4mLaf'
 STEP_THRESHOLD = 1000
 JST = timezone(timedelta(hours=9))
 
