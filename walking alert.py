@@ -78,4 +78,6 @@ def run_alert():
         return f"歩数OK: {total_steps} 歩"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 5000))  # RenderではPORTが自動で入る
+    app.run(host="0.0.0.0", port=port)
+
