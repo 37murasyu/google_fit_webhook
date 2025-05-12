@@ -55,8 +55,12 @@ def run_alert():
 
     dataset_id = f"{start}000000-{end}000000"
     steps_data = fitness.users().dataSources(). \
-        get(userId="me", dataSourceId=step_source["dataStreamId"]). \
-        datasets().get(datasetId=dataset_id).execute()
+        datasets().get(
+            userId="me",
+            dataSourceId=step_source["dataStreamId"],
+            datasetId=dataset_id
+        ).execute()
+
 
     total_steps = 0
     for point in steps_data.get("point", []):
