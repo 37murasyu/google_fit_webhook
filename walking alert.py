@@ -1,29 +1,31 @@
 import os
+import datetime
 import requests
-from datetime import datetime, timedelta, timezone
+from flask import Flask
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+app = Flask(__name__)
 
-# --- 設定 ---
-SCOPES = [
-    'https://www.googleapis.com/auth/fitness.activity.read',
-    'https://www.googleapis.com/auth/fitness.sleep.read'
-]
-PB_TOKEN = 'o.txyD655ztabTCzPEfQpKJAKMQta4mLaf'
-STEP_THRESHOLD = 1000
-JST = timezone(timedelta(hours=9))
+@app.route("/")
+def index():
+    return "Google Fit Webhook is running!"
 
+@app.route("/wake_alert")
+def wake_alert():
+    print("🔔 wake_alert triggered!")
+    try:
+        result = run_alert()
+        return result, 200
+    except Exception as e:
+        print("❌ error:", e)
+        return "Internal Server Error", 500
 
+def run_alert():
+    print("✅ run_alert: Start")
 
-# --- 認証 ---
-def authenticate():
-    if os.path.exists('token.json'):
-        return Credentials.from_authorized_user_file('token.json', SCOPES)
-    flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
     creds = Credentials(
-        token=None,
+        token=None,  # ここはNoneでOK。refresh_tokenで更新されます
         refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
         token_uri="https://oauth2.googleapis.com/token",
         client_id=os.environ["GOOGLE_CLIENT_ID"],
@@ -33,104 +35,47 @@ def authenticate():
             "https://www.googleapis.com/auth/fitness.sleep.read"
         ]
     )
-    return creds
 
-# --- ナノ秒変換 ---
-def nanoseconds(dt):
-    return int(dt.timestamp() * 1e9)
+    now = datetime.datetime.utcnow()
+    start = int(now.timestamp() * 1000)
+    end = int((now + datetime.timedelta(minutes=30)).timestamp() * 1000)
 
-# --- 起床時間を推定（最も長い睡眠の終了） ---
-def estimate_wake_time(service):
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(days=2)
-    dataset = f"{nanoseconds(start)}-{nanoseconds(now)}"
+    fitness = build("fitness", "v1", credentials=creds)
+    datasources = fitness.users().dataSources().list(userId="me").execute()
 
-    res = service.users().dataSources().datasets().get(
-        userId='me',
-        dataSourceId='derived:com.google.sleep.segment:com.google.android.gms:merged',
-        datasetId=dataset
-    ).execute()
-
-    sleep_data = res.get('point', [])
-    valid_stages = [2, 3, 4]
-    segments = [
-        (
-            int(p['startTimeNanos']) / 1e9,
-            int(p['endTimeNanos']) / 1e9
-        ) for p in sleep_data
-        if p['value'][0].get('intVal') in valid_stages
-    ]
-
-    if not segments:
-        return None
-
-    # 10分以内の中断は同一睡眠として連結
-    grouped = []
-    buffer = []
-    for s, e in sorted(segments):
-        if not buffer:
-            buffer = [s, e]
-        elif s - buffer[1] <= 600:
-            buffer[1] = max(buffer[1], e)
-        else:
-            grouped.append(tuple(buffer))
-            buffer = [s, e]
-    if buffer:
-        grouped.append(tuple(buffer))
-
-    # 最後のまとまった睡眠（30分以上）を起床と見なす
-    meaningful = [g for g in grouped if g[1] - g[0] >= 1800]
-    if not meaningful:
-        return None
-
-    return datetime.fromtimestamp(meaningful[-1][1], tz=timezone.utc).astimezone(JST)
-
-# --- 歩数取得 ---
-def get_steps(service, start_dt, end_dt):
-    dataset = f"{nanoseconds(start_dt)}-{nanoseconds(end_dt)}"
-    res = service.users().dataSources().datasets().get(
-        userId='me',
-        dataSourceId='derived:com.google.step_count.delta:com.google.android.gms:estimated_steps',
-        datasetId=dataset
-    ).execute()
-    return sum(p['value'][0]['intVal'] for p in res.get('point', []))
-
-# --- Pushbullet通知 ---
-def send_pushbullet_alert(title, message):
-    requests.post(
-        "https://api.pushbullet.com/v2/pushes",
-        headers={
-            "Access-Token": PB_TOKEN,
-            "Content-Type": "application/json"
-        },
-        json={
-            "type": "note",
-            "title": title,
-            "body": message
-        }
+    # stepカウント用のデータソースを探す
+    step_source = next(
+        (s for s in datasources["dataSource"]
+         if "derived:com.google.step_count.delta" in s["dataStreamId"]),
+        None
     )
 
-# --- メイン処理 ---
-def main():
-    creds = authenticate()
-    service = build('fitness', 'v1', credentials=creds)
+    if not step_source:
+        raise Exception("❌ Step data source not found")
 
-    wake_time = estimate_wake_time(service)
-    if not wake_time:
-        print("❌ 起床時間が取得できませんでした")
-        return
+    dataset_id = f"{start}000000-{end}000000"
+    steps_data = fitness.users().dataSources(). \
+        get(userId="me", dataSourceId=step_source["dataStreamId"]). \
+        datasets().get(datasetId=dataset_id).execute()
 
-    print(f"✅ 起床時間（JST）: {wake_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    total_steps = 0
+    for point in steps_data.get("point", []):
+        total_steps += point["value"][0]["intVal"]
 
-    end_time = wake_time + timedelta(minutes=30)
-    steps = get_steps(service, wake_time, end_time)
-    print(f"🚶 起床後30分の歩数: {steps} 歩")
+    print(f"🚶 Total steps: {total_steps}")
 
-    if steps < STEP_THRESHOLD:
-        print("⚠️ 歩数不足 → Pushbullet通知送信")
-        send_pushbullet_alert("⚠️ 歩数アラート", f"{wake_time.strftime('%H:%M')} 起床後30分で {steps} 歩です。動きましょう！")
+    if total_steps < 1000:
+        msg = f"起床後30分以内の歩数が {total_steps} 歩です。もっと動こう！"
+        requests.post(
+            "https://api.pushbullet.com/v2/pushes",
+            json={"type": "note", "title": "ウォーキング不足アラート", "body": msg},
+            headers={"Access-Token": os.environ["PB_TOKEN"]}
+        )
+        print("📲 Pushbullet通知送信")
+        return msg
     else:
-        print("🎉 歩数目標達成！通知は不要です")
+        print("💤 十分な歩数のため通知不要")
+        return f"歩数OK: {total_steps} 歩"
 
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
