@@ -8,5 +8,5 @@ def index():
 
 @app.route("/wake_alert")
 def wake_alert():
-    subprocess.Popen(["python", "google_fit_alert.py"])
+    subprocess.Popen(["python", "walking alert.py"])
     return "Wake alert received", 200
