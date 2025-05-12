@@ -5,6 +5,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+
 # --- 設定 ---
 SCOPES = [
     'https://www.googleapis.com/auth/fitness.activity.read',
@@ -14,14 +15,24 @@ PB_TOKEN = 'o.txyD655ztabTCzPEfQpKJAKMQta4mLaf'
 STEP_THRESHOLD = 1000
 JST = timezone(timedelta(hours=9))
 
+
+
 # --- 認証 ---
 def authenticate():
     if os.path.exists('token.json'):
         return Credentials.from_authorized_user_file('token.json', SCOPES)
     flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-    creds = flow.run_local_server(port=0)
-    with open("token.json", "w") as token:
-        token.write(creds.to_json())
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ["GOOGLE_CLIENT_ID"],
+        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+        scopes=[
+            "https://www.googleapis.com/auth/fitness.activity.read",
+            "https://www.googleapis.com/auth/fitness.sleep.read"
+        ]
+    )
     return creds
 
 # --- ナノ秒変換 ---
